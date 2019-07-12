@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/gorilla/mux"
 	"html/template"
 	"io/ioutil"
@@ -304,14 +305,14 @@ func passwordSaveHandler(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("V")
 	if err != nil {
 		log.Println("login expire, log in again", err)
-		http.Redirect(w, r, "/home/", http.StatusFound)
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	cookieValue := strings.TrimPrefix(cookie.Value, "cookie=")
 	originalProfile, err := readProfile(cookieValue)
 	if err != nil {
 		log.Println("login expire, log in again", err)
-		http.Redirect(w, r, "/home/", http.StatusFound)
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	if newPassword != passwordConfirm {
@@ -360,7 +361,7 @@ func passwordSaveHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 //
-func loginHandler(w http.ResponseWriter, r *http.Request) {
+func loginSubmitHandler(w http.ResponseWriter, r *http.Request) {
 	// Get user login in information
 	username := r.FormValue("username")
 	password := r.FormValue("password")
@@ -378,15 +379,29 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Get token from login response from backend
-	token := response.Header.Get("Set-Cookie")
+	var credential *http.Cookie
+	if credential, err = getCookieByName(response.Cookies(), "V"); err != nil {
+		log.Println("failed to get cookie from response", err)
+		http.Redirect(w, r, "/loginError/", http.StatusFound)
+		return
+	}
 	// Set the cookies to the browser
 	Cookie := http.Cookie{Name: "V",
-		Value:    token,
+		Value:    credential.Value,
 		Path:     "/",
 		HttpOnly: true}
 	http.SetCookie(w, &Cookie)
 	http.Redirect(w, r, "/privatePage/", http.StatusFound)
 	return
+}
+
+func getCookieByName(cookies []*http.Cookie, name string) (*http.Cookie, error) {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie, nil
+		}
+	}
+	return nil, errors.New("No cookie with name \"" + name + "\"")
 }
 
 //
@@ -398,7 +413,11 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 //
 func privateHandler(w http.ResponseWriter, r *http.Request) {
 	// Read cookie from browser
-	cookie, _ := r.Cookie("V")
+	cookie, err := r.Cookie("V")
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", "http://localhost:8080/v1/accounts/@me", nil)
 	if err != nil {
@@ -421,7 +440,7 @@ func privateHandler(w http.ResponseWriter, r *http.Request) {
 	err = json.Unmarshal(bodyBytes, &pageInfo)
 	if err != nil {
 		log.Println(err)
-		http.Redirect(w, r, "/home/", http.StatusFound)
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	renderTemplate(w, "profile", &pageInfo)
@@ -441,7 +460,7 @@ func createHandler(w http.ResponseWriter, r *http.Request) {
 	newUser, err := json.Marshal(pageinfo)
 	if err != nil {
 		log.Println(err)
-		http.Redirect(w, r, "/home/", http.StatusFound)
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	Data := string(newUser)
@@ -464,26 +483,38 @@ func createHandler(w http.ResponseWriter, r *http.Request) {
 	response, err := http.Post("http://localhost:8080/v1/sessions/", "application/json", payload)
 	if err != nil {
 		log.Println(err)
-		http.Redirect(w, r, "/home/", http.StatusFound)
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	// Log in with newly created account information
-	// Get token from login response from backend
-	token := response.Header.Get("Set-Cookie")
+	// Get credential from login response of backend
+	cookies := response.Cookies()
+	var credential *http.Cookie
+	if credential, err = getCookieByName(cookies, "V"); err != nil {
+		log.Println("Cannot find V cookie in the response", err)
+		http.Redirect(w, r, "/create/", http.StatusFound)
+		return
+	}
+
 	// Set the cookie to the browser
 	Cookie := http.Cookie{Name: "V",
-		Value:    token,
+		Value:    credential.Value,
 		Path:     "/",
 		HttpOnly: true}
 	http.SetCookie(w, &Cookie)
+
 	// After log in, redirect to the personal private page
 	http.Redirect(w, r, "/privatePage/", http.StatusFound)
 }
 
 // Handle the login page
-func homeHandler(w http.ResponseWriter, r *http.Request) {
+func loginHandler(w http.ResponseWriter, r *http.Request) {
 	p := Profile{}
 	renderTemplate(w, "login", &p)
+}
+
+func homeHandler(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
 // Handle error when having wrong password and let user to re-enter password
@@ -498,7 +529,7 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 		Path:   "/",
 		MaxAge: -1}
 	http.SetCookie(w, &logOutCookie)
-	http.Redirect(w, r, "/home/", http.StatusFound)
+	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
 // Load html template
@@ -539,7 +570,10 @@ func main() {
 	router.HandleFunc("/save/", saveEditedInfo)
 	router.HandleFunc("/register/", registerHandler)
 	router.HandleFunc("/create/", createHandler)
-	router.HandleFunc("/login/", loginHandler)
+	router.HandleFunc("/login", loginSubmitHandler).
+		Methods("POST")
+	router.HandleFunc("/login", loginHandler).
+		Methods("GET")
 	router.HandleFunc("/", homeHandler).
 		Methods("GET")
 	router.HandleFunc("/privatePage/", privateHandler)
