@@ -66,15 +66,15 @@ type TokenInfo struct {
 }
 
 const (
-	backendURI        = "/v1"
+	backendURLPath    = "/v1"
 	timeoutInSeconds  = 10
 	ownAccountURLPath = "/accounts/@me"
 	loginURLPath      = "/login"
 )
 
 var (
-	backendAddr, backendURL string
-	client                  = &http.Client{
+	backendURL string
+	client     = &http.Client{
 		Timeout: time.Second * timeoutInSeconds,
 	}
 	templates = template.Must(template.ParseGlob("./template/*.html"))
@@ -146,7 +146,7 @@ func readUserProfile(username string) (*publicInfo, error) {
 	return &pageData, err
 }
 
-//
+// accountHandler is the handler for the public account page.
 func accountHandler(w http.ResponseWriter, r *http.Request) {
 	variables := mux.Vars(r)
 	p, err := readUserProfile(variables["id"])
@@ -393,7 +393,7 @@ func passwordSaveHandler(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-//
+// loginSubmitHandler handles the request for submitting logging request.
 func loginSubmitHandler(w http.ResponseWriter, r *http.Request) {
 	// Get user login in information
 	username := r.FormValue("username")
@@ -509,13 +509,13 @@ func emailSaveHandler(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("V")
 	if err != nil {
 		log.Println("login expire, log in again", err)
-		http.Redirect(w, r, "/home/", http.StatusFound)
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 	originalProfile, err := readMyProfile(cookie)
 	if err != nil {
 		log.Println("login expire, log in again", err)
-		http.Redirect(w, r, "/home/", http.StatusFound)
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 	updateEmail := updateEmail{
@@ -557,7 +557,7 @@ func emailSaveHandler(w http.ResponseWriter, r *http.Request) {
 
 }
 
-//
+// registerHandler handles the requests for rendering the registration page.
 func registerHandler(w http.ResponseWriter, r *http.Request) {
 	p := registerPage{}
 	renderTemplate(w, "register", &p)
@@ -573,7 +573,7 @@ func myAccountHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := &http.Client{}
-	req, err := http.NewRequest("GET", "http://localhost:8080/v1/accounts/@me", nil)
+	req, err := http.NewRequest("GET", backendURL+"/accounts/@me", nil)
 	if err != nil {
 		log.Println(err)
 		http.Redirect(w, r, "/loginError/", http.StatusFound)
@@ -593,7 +593,7 @@ func myAccountHandler(w http.ResponseWriter, r *http.Request) {
 	err = json.Unmarshal(bodyBytes, &pageInfo)
 	if err != nil {
 		log.Println(err)
-		http.Redirect(w, r, "/home/", http.StatusFound)
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 	renderTemplate(w, "profile", &pageInfo)
@@ -715,15 +715,16 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 
 //
 func main() {
+	var backendAddr string
 	flag.StringVar(&backendAddr, "backend", "localhost:8080", "backend IP and port")
 	flag.Parse()
-	backendURL = "http://" + backendAddr + backendURI
+	backendURL = "http://" + backendAddr + backendURLPath
 
 	router := mux.NewRouter()
 
 	router.HandleFunc("/accounts/{id:[^@]+}", accountHandler).
 		Methods("GET")
-	router.HandleFunc("/edit", editHandler)
+	router.HandleFunc("/edit/", editHandler)
 	router.HandleFunc("/save/", saveEditedInfo)
 	router.HandleFunc("/register/", registerHandler).
 		Methods("GET")
